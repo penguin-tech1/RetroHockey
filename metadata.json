@@ -1,0 +1,6 @@
+{
+  "name": "Retro Puck ’94: 16-Bit Ice Showdown",
+  "description": "Fast, visceral 16-bit hockey arcade homage featuring authentic ice physics, one-timers, crushing body checks, World Cup tournaments, and a 500-player Dynasty Card Franchise mode.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
