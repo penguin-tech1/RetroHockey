@@ -38,10 +38,9 @@ class RetroAudioEngine {
 
   public playIntroTagline() {
     this.playOrganCharge();
-    this.announce("Tuxedo Penguin Gaming Sports — It's in the game!", true);
   }
 
-  // 16-Bit Arcade Intro Fanfare with arpeggiated boot chimes & studio announcement
+  // 16-Bit Arcade Intro Fanfare with arpeggiated boot chimes
   public playIntroFanfare() {
     const ctx = this.ensureContext();
     if (!ctx) return;
@@ -62,7 +61,6 @@ class RetroAudioEngine {
 
     window.setTimeout(() => {
       this.playOrganCharge();
-      this.announce("Tuxedo Penguin Gaming Sports — It's in the game!", true);
     }, 400);
   }
 

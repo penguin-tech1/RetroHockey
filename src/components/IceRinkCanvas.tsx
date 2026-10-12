@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { DifficultyMode, PlayerCard, RinkVenue } from '../types/game';
 import { retroAudio } from '../utils/retroAudio';
-import { Volume2, VolumeX, Play, Pause, RotateCcw, ShieldAlert, Zap, Award } from 'lucide-react';
+import { Volume2, VolumeX, Play, Pause, RotateCcw, ShieldAlert, Zap, Award, Maximize2, Minimize2 } from 'lucide-react';
 
 export type MatchGameMode = 'DYNASTY' | 'WORLDCUP' | 'POND_3V3' | 'SHOOTOUT';
 
@@ -98,12 +98,16 @@ const RINK_W = 1000;
 const RINK_H = 520;
 const ICE_LEFT = 50;
 const ICE_RIGHT = 950;
-const ICE_TOP = 40;
-const ICE_BOTTOM = 480;
-const CORNER_R = 72;
+const ICE_TOP = 36;
+const ICE_BOTTOM = 484;
+const CORNER_R = 76; // Authentic IIHF Olympic corner curvature radius (~8.5m scale)
 
-const GOAL_LEFT_X = 115;
-const GOAL_RIGHT_X = 885;
+// Official IIHF International Markings
+const CENTER_X = 500;
+const BLUE_LEFT_X = 370;
+const BLUE_RIGHT_X = 630;
+const GOAL_LEFT_X = 110;
+const GOAL_RIGHT_X = 890;
 const GOAL_Y_CENTER = 260;
 const GOAL_HALF_W = 38;
 
@@ -125,8 +129,57 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
   onMatchComplete,
   onExit,
 }) => {
+  const arenaContainerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const staticRinkBufferRef = useRef<HTMLCanvasElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Fullscreen Toggle Handler (Seamless Browser Fullscreen API + Viewport Fallback)
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement && !isFullscreen) {
+      if (arenaContainerRef.current?.requestFullscreen) {
+        arenaContainerRef.current.requestFullscreen().catch(() => {
+          setIsFullscreen(true);
+        });
+      } else {
+        setIsFullscreen(true);
+      }
+    } else {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+      setIsFullscreen(false);
+    }
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+    };
+  }, []);
+
+  // Hotkey listener: Press F to toggle Fullscreen, Escape to exit
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === 'KeyF' && !e.repeat && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        toggleFullscreen();
+      } else if (e.code === 'Escape' && isFullscreen) {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleFullscreen, isFullscreen]);
 
   // React UI HUD State (synced cleanly at low frequency so 60 FPS canvas never stutters)
   const [hudState, setHudState] = useState({
@@ -281,6 +334,13 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
     isPaused: false,
     isGameOver: false,
     brawlActive: false,
+    rules: {
+      prevPuckX: 500,
+      shotOriginX: 500,
+      shotOriginTeam: null as 'HOME' | 'AWAY' | null,
+      goalieCoverTimer: 0,
+      offsideCooldown: 0,
+    },
   });
 
   // Pre-render the static rink surface to an offscreen canvas ("Gopi Mode" Zero Overdraw optimization)
@@ -345,7 +405,7 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
     ctx.fillRect(465, ICE_TOP, 70, ICE_BOTTOM - ICE_TOP);
     ctx.fillRect(690, ICE_TOP, 90, ICE_BOTTOM - ICE_TOP);
 
-    // Goal Lines (Red, thin)
+    // 1. Official Goal Lines (Red, 3px regulation)
     ctx.strokeStyle = '#dc2626';
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -355,89 +415,208 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
     ctx.lineTo(GOAL_RIGHT_X, ICE_BOTTOM);
     ctx.stroke();
 
-    // Blue Lines (Authentic Arcade Hockey)
+    // 2. Goaltender Restricted Trapezoid Area (Behind Both Nets to End Boards)
+    ctx.strokeStyle = '#dc2626';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    // Left net trapezoid
+    ctx.moveTo(GOAL_LEFT_X, GOAL_Y_CENTER - 34);
+    ctx.lineTo(ICE_LEFT, GOAL_Y_CENTER - 68);
+    ctx.moveTo(GOAL_LEFT_X, GOAL_Y_CENTER + 34);
+    ctx.lineTo(ICE_LEFT, GOAL_Y_CENTER + 68);
+    // Right net trapezoid
+    ctx.moveTo(GOAL_RIGHT_X, GOAL_Y_CENTER - 34);
+    ctx.lineTo(ICE_RIGHT, GOAL_Y_CENTER - 68);
+    ctx.moveTo(GOAL_RIGHT_X, GOAL_Y_CENTER + 34);
+    ctx.lineTo(ICE_RIGHT, GOAL_Y_CENTER + 68);
+    ctx.stroke();
+
+    // 3. Official Zone Blue Lines (10px wide solid royal blue = 30cm regulation)
     if (mode !== 'POND_3V3') {
-      ctx.fillStyle = '#2563eb';
-      ctx.fillRect(355, ICE_TOP, 8, ICE_BOTTOM - ICE_TOP);
-      ctx.fillRect(637, ICE_TOP, 8, ICE_BOTTOM - ICE_TOP);
+      ctx.fillStyle = '#1d4ed8';
+      ctx.fillRect(BLUE_LEFT_X - 5, ICE_TOP, 10, ICE_BOTTOM - ICE_TOP);
+      ctx.fillRect(BLUE_RIGHT_X - 5, ICE_TOP, 10, ICE_BOTTOM - ICE_TOP);
     }
 
-    // Red Center Line (Dashed 16-bit style)
+    // 4. Center Red Line (10px wide with official IIHF Checkered Diamond Motif)
     ctx.fillStyle = '#dc2626';
-    for (let y = ICE_TOP; y < ICE_BOTTOM; y += 20) {
-      ctx.fillRect(496, y, 8, 12);
+    ctx.fillRect(CENTER_X - 5, ICE_TOP, 10, ICE_BOTTOM - ICE_TOP);
+    ctx.fillStyle = '#ffffff';
+    for (let y = ICE_TOP + 4; y < ICE_BOTTOM; y += 18) {
+      ctx.fillRect(CENTER_X - 3, y, 6, 9);
     }
 
-    // Center Ice Faceoff Circle & Logo
-    ctx.strokeStyle = '#2563eb';
+    // 5. Referee Crease (Semi-circle at center boards, 3m / 36px regulation)
+    ctx.strokeStyle = '#dc2626';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(CENTER_X, ICE_BOTTOM, 36, Math.PI, 0);
+    ctx.stroke();
+
+    // 6. Center Ice Faceoff Circle (Royal Blue, radius 58px = 9m regulation) & Spot (Solid Red)
+    ctx.strokeStyle = '#1d4ed8';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(500, 260, 56, 0, Math.PI * 2);
+    ctx.arc(CENTER_X, GOAL_Y_CENTER, 58, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.fillStyle = '#dc2626';
     ctx.beginPath();
-    ctx.arc(500, 260, 6, 0, Math.PI * 2);
+    ctx.arc(CENTER_X, GOAL_Y_CENTER, 6, 0, Math.PI * 2);
     ctx.fill();
 
-    // 4 Zone Faceoff Circles
-    const faceoffSpots = [
-      [230, 145],
-      [230, 375],
-      [770, 145],
-      [770, 375],
+    // 7. Four End-Zone Faceoff Circles & Spots (Radius 58px, Red)
+    const endFaceoffs = [
+      [220, 145],
+      [220, 375],
+      [780, 145],
+      [780, 375],
     ];
-    faceoffSpots.forEach(([fx, fy]) => {
+    endFaceoffs.forEach(([fx, fy]) => {
+      // Red Outer Ring
       ctx.strokeStyle = '#dc2626';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(fx, fy, 42, 0, Math.PI * 2);
+      ctx.arc(fx, fy, 58, 0, Math.PI * 2);
       ctx.stroke();
 
+      // Center Red Spot with White Inner Dot
       ctx.fillStyle = '#dc2626';
       ctx.beginPath();
-      ctx.arc(fx, fy, 4.5, 0, Math.PI * 2);
+      ctx.arc(fx, fy, 6, 0, Math.PI * 2);
       ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(fx, fy, 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Official Player Alignment Double Hash Marks (2 top, 2 bottom)
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = 2.5;
+      [-16, 16].forEach((dx) => {
+        // Top hash marks
+        ctx.beginPath();
+        ctx.moveTo(fx + dx, fy - 58);
+        ctx.lineTo(fx + dx, fy - 70);
+        ctx.stroke();
+        // Bottom hash marks
+        ctx.beginPath();
+        ctx.moveTo(fx + dx, fy + 58);
+        ctx.lineTo(fx + dx, fy + 70);
+        ctx.stroke();
+      });
+
+      // Official Face-off Restriction "L" Markings Inside Circle
+      const lDist = 18;
+      const lLen = 8;
+      ctx.beginPath();
+      // Top-Left L
+      ctx.moveTo(fx - lDist, fy - lDist - lLen);
+      ctx.lineTo(fx - lDist, fy - lDist);
+      ctx.lineTo(fx - lDist - lLen, fy - lDist);
+      // Top-Right L
+      ctx.moveTo(fx + lDist, fy - lDist - lLen);
+      ctx.lineTo(fx + lDist, fy - lDist);
+      ctx.lineTo(fx + lDist + lLen, fy - lDist);
+      // Bottom-Left L
+      ctx.moveTo(fx - lDist, fy + lDist + lLen);
+      ctx.lineTo(fx - lDist, fy + lDist);
+      ctx.lineTo(fx - lDist - lLen, fy + lDist);
+      // Bottom-Right L
+      ctx.moveTo(fx + lDist, fy + lDist + lLen);
+      ctx.lineTo(fx + lDist, fy + lDist);
+      ctx.lineTo(fx + lDist + lLen, fy + lDist);
+      ctx.stroke();
     });
 
-    // Goal Creases (Light Blue Half-Circles with Red Outline)
-    ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
-    ctx.strokeStyle = '#dc2626';
-    ctx.lineWidth = 2;
+    // 8. Four Neutral Zone Faceoff Spots (Red dots without circles, 1.5m from blue lines)
+    if (mode !== 'POND_3V3') {
+      const neutralSpots = [
+        [415, 145],
+        [415, 375],
+        [585, 145],
+        [585, 375],
+      ];
+      neutralSpots.forEach(([nx, ny]) => {
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.arc(nx, ny, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(nx, ny, 2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
 
-    // Left Crease
+    // 9. Official IIHF Standard D-Shaped Goal Creases (Sky-Blue Paint Fill + Red Border + Tick Tabs)
+    const creaseR = 36;
+    // Left Crease (Home Net)
+    ctx.fillStyle = 'rgba(125, 211, 252, 0.45)';
+    ctx.strokeStyle = '#dc2626';
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(GOAL_LEFT_X, GOAL_Y_CENTER, 34, -Math.PI / 2, Math.PI / 2);
+    ctx.arc(GOAL_LEFT_X, GOAL_Y_CENTER, creaseR, -Math.PI / 2, Math.PI / 2);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-
-    // Right Crease
+    // Crease Base Tick Marks
     ctx.beginPath();
-    ctx.arc(GOAL_RIGHT_X, GOAL_Y_CENTER, 34, Math.PI / 2, -Math.PI / 2);
+    ctx.moveTo(GOAL_LEFT_X, GOAL_Y_CENTER - creaseR);
+    ctx.lineTo(GOAL_LEFT_X - 6, GOAL_Y_CENTER - creaseR);
+    ctx.moveTo(GOAL_LEFT_X, GOAL_Y_CENTER + creaseR);
+    ctx.lineTo(GOAL_LEFT_X - 6, GOAL_Y_CENTER + creaseR);
+    ctx.stroke();
+
+    // Right Crease (Away Net)
+    ctx.beginPath();
+    ctx.arc(GOAL_RIGHT_X, GOAL_Y_CENTER, creaseR, Math.PI / 2, -Math.PI / 2);
     ctx.closePath();
     ctx.fill();
+    ctx.stroke();
+    // Crease Base Tick Marks
+    ctx.beginPath();
+    ctx.moveTo(GOAL_RIGHT_X, GOAL_Y_CENTER - creaseR);
+    ctx.lineTo(GOAL_RIGHT_X + 6, GOAL_Y_CENTER - creaseR);
+    ctx.moveTo(GOAL_RIGHT_X, GOAL_Y_CENTER + creaseR);
+    ctx.lineTo(GOAL_RIGHT_X + 6, GOAL_Y_CENTER + creaseR);
     ctx.stroke();
 
     ctx.restore();
 
-    // Perimeter Boards & Plexiglass Border
+    // 10. Perimeter Dasher Boards, Kickplate, Cap Rail, and Player Bench Markings
+    // Base Dasher Boards (Crisp White Polyethylene)
     drawRoundedIce();
-    ctx.strokeStyle = venue.boardColor;
-    ctx.lineWidth = 10;
+    ctx.strokeStyle = '#f8fafc';
+    ctx.lineWidth = 8;
     ctx.stroke();
 
+    // Yellow Kickplate (Base inside edge, standard 8 inches / 20cm scale)
     drawRoundedIce();
-    ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#eab308';
+    ctx.lineWidth = 2.5;
     ctx.stroke();
+
+    // Blue Cap Rail (Top outside edge)
+    drawRoundedIce();
+    ctx.strokeStyle = '#1d4ed8';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Bench & Penalty Gate Indicator Slabs on Boards
+    ctx.fillStyle = homePrimaryColor;
+    ctx.fillRect(230, ICE_TOP - 9, 80, 5);
+    ctx.fillStyle = awayPrimaryColor;
+    ctx.fillRect(690, ICE_TOP - 9, 80, 5);
+    ctx.fillStyle = '#dc2626';
+    ctx.fillRect(470, ICE_BOTTOM + 4, 60, 5);
 
     staticRinkBufferRef.current = offscreen;
   }, [venue, mode, homePrimaryColor, awayPrimaryColor]);
 
-  // Spawn / Reset Skater Positions for Faceoff or Breakaway Shootout
+  // Spawn / Reset Skater Positions for Faceoff (Center or Specific Zone Dot) or Breakaway Shootout
   const setupPositions = useCallback(
-    (centerTeam: 'HOME' | 'AWAY' = 'HOME') => {
+    (centerTeam: 'HOME' | 'AWAY' = 'HOME', spot?: { x: number; y: number }) => {
       const eng = engineRef.current;
       const skaters: SkaterEntity[] = [];
 
@@ -535,21 +714,41 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
       const homeFieldCount = Math.max(3, baseSkaterCount - Math.min(2, homePenalties));
       const awayFieldCount = Math.max(3, baseSkaterCount - Math.min(2, awayPenalties));
 
-      const homeFormations: { role: SkaterEntity['role']; x: number; y: number }[] = [
-        { role: 'C', x: 472, y: 260 },
-        { role: 'LW', x: 430, y: 165 },
-        { role: 'RW', x: 430, y: 355 },
-        { role: 'LD', x: 310, y: 195 },
-        { role: 'RD', x: 310, y: 325 },
-      ];
+      const spotX = spot ? spot.x : 500;
+      const spotY = spot ? spot.y : 260;
+      const isZoneFaceoff = spot && Math.abs(spot.x - 500) > 30;
 
-      const awayFormations: { role: SkaterEntity['role']; x: number; y: number }[] = [
-        { role: 'C', x: 528, y: 260 },
-        { role: 'LW', x: 570, y: 165 },
-        { role: 'RW', x: 570, y: 355 },
-        { role: 'LD', x: 690, y: 195 },
-        { role: 'RD', x: 690, y: 325 },
-      ];
+      const homeFormations: { role: SkaterEntity['role']; x: number; y: number }[] = isZoneFaceoff
+        ? [
+            { role: 'C', x: spotX - 24, y: spotY },
+            { role: 'LW', x: Math.max(ICE_LEFT + 40, spotX - 60), y: Math.max(ICE_TOP + 40, spotY - 60) },
+            { role: 'RW', x: Math.max(ICE_LEFT + 40, spotX - 60), y: Math.min(ICE_BOTTOM - 40, spotY + 60) },
+            { role: 'LD', x: Math.max(ICE_LEFT + 30, spotX - 120), y: Math.max(ICE_TOP + 45, spotY - 35) },
+            { role: 'RD', x: Math.max(ICE_LEFT + 30, spotX - 120), y: Math.min(ICE_BOTTOM - 45, spotY + 35) },
+          ]
+        : [
+            { role: 'C', x: 472, y: 260 },
+            { role: 'LW', x: 430, y: 165 },
+            { role: 'RW', x: 430, y: 355 },
+            { role: 'LD', x: 310, y: 195 },
+            { role: 'RD', x: 310, y: 325 },
+          ];
+
+      const awayFormations: { role: SkaterEntity['role']; x: number; y: number }[] = isZoneFaceoff
+        ? [
+            { role: 'C', x: spotX + 24, y: spotY },
+            { role: 'LW', x: Math.min(ICE_RIGHT - 40, spotX + 60), y: Math.max(ICE_TOP + 40, spotY - 60) },
+            { role: 'RW', x: Math.min(ICE_RIGHT - 40, spotX + 60), y: Math.min(ICE_BOTTOM - 40, spotY + 60) },
+            { role: 'LD', x: Math.min(ICE_RIGHT - 30, spotX + 120), y: Math.max(ICE_TOP + 45, spotY - 35) },
+            { role: 'RD', x: Math.min(ICE_RIGHT - 30, spotX + 120), y: Math.min(ICE_BOTTOM - 45, spotY + 35) },
+          ]
+        : [
+            { role: 'C', x: 528, y: 260 },
+            { role: 'LW', x: 570, y: 165 },
+            { role: 'RW', x: 570, y: 355 },
+            { role: 'LD', x: 690, y: 195 },
+            { role: 'RD', x: 690, y: 325 },
+          ];
 
       for (let i = 0; i < homeFieldCount; i++) {
         const f = homeFormations[i];
@@ -625,16 +824,19 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
 
       eng.skaters = skaters;
       eng.controlledId = 'HOME_0';
-      eng.puck.x = 500;
-      eng.puck.y = 260;
+      eng.puck.x = spotX;
+      eng.puck.y = spotY;
       eng.puck.vx = (centerTeam === 'HOME' ? -1 : 1) * 0.5;
       eng.puck.vy = (Math.random() - 0.5) * 1.2;
       eng.puck.ownerId = null;
       eng.puck.passTimer = 0;
-      eng.faceoffCountdown = 55;
+      eng.rules.prevPuckX = spotX;
+      eng.rules.shotOriginTeam = null;
+      eng.rules.goalieCoverTimer = 0;
+      eng.faceoffCountdown = 50;
       eng.tuxedoPenguinRef = {
-        x: 500,
-        y: 205,
+        x: spotX,
+        y: Math.max(ICE_TOP + 20, spotY - 45),
         visible: true,
         message: 'FACEOFF!',
         timer: 85,
@@ -856,6 +1058,8 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
 
     eng.puck.ownerId = null;
     eng.puck.passTimer = 0;
+    eng.rules.shotOriginX = eng.puck.x;
+    eng.rules.shotOriginTeam = 'HOME';
     eng.puck.vx = Math.cos(angle) * speed;
     eng.puck.vy = Math.sin(angle) * speed;
     eng.homeShots += 1;
@@ -1220,6 +1424,8 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
                   );
                   const spd = 11.5 + (s.card.sht - 70) * 0.07 + (difficulty === 'LEGEND' ? 2.5 : difficulty === 'EASY' ? -2.0 : 0);
                   eng.puck.ownerId = null;
+                  eng.rules.shotOriginX = eng.puck.x;
+                  eng.rules.shotOriginTeam = 'AWAY';
                   eng.puck.vx = Math.cos(shotAngle) * spd;
                   eng.puck.vy = Math.sin(shotAngle) * spd;
                   eng.awayShots += 1;
@@ -1320,10 +1526,99 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
           puck.ownerId = null;
         }
       } else {
+        const prevPuckX = puck.x;
         puck.x += puck.vx;
         puck.y += puck.vy;
         puck.vx *= 0.991;
         puck.vy *= 0.991;
+
+        // --- OFFICIAL ICE HOCKEY RULES ENFORCEMENT ---
+        if (mode !== 'SHOOTOUT' && mode !== 'POND_3V3' && eng.faceoffCountdown <= 0) {
+          // Rule 1: OFFSIDE (IIHF Rule 78)
+          // Attacking skaters cannot cross the offensive blue line ahead of the puck
+          if (puck.x > BLUE_RIGHT_X && prevPuckX <= BLUE_RIGHT_X && puck.vx > 0) {
+            const isOffsideHome = eng.skaters.some(
+              (s) => s.team === 'HOME' && s.role !== 'G' && s.id !== puck.ownerId && s.x > BLUE_RIGHT_X + 8
+            );
+            if (isOffsideHome) {
+              retroAudio.playWhistle();
+              eng.tuxedoPenguinRef.message = 'WHISTLE: OFFSIDE! ATTACKING SKATER PRECEDED PUCK';
+              eng.tuxedoPenguinRef.timer = 100;
+              eng.rules.shotOriginTeam = null;
+              const spot = { x: 585, y: puck.y < GOAL_Y_CENTER ? 145 : 375 };
+              setupPositions('AWAY', spot);
+              return;
+            }
+          } else if (puck.x < BLUE_LEFT_X && prevPuckX >= BLUE_LEFT_X && puck.vx < 0) {
+            const isOffsideAway = eng.skaters.some(
+              (s) => s.team === 'AWAY' && s.role !== 'G' && s.id !== puck.ownerId && s.x < BLUE_LEFT_X - 8
+            );
+            if (isOffsideAway) {
+              retroAudio.playWhistle();
+              eng.tuxedoPenguinRef.message = 'WHISTLE: OFFSIDE! AWAY SKATER PRECEDED PUCK';
+              eng.tuxedoPenguinRef.timer = 100;
+              eng.rules.shotOriginTeam = null;
+              const spot = { x: 415, y: puck.y < GOAL_Y_CENTER ? 145 : 375 };
+              setupPositions('HOME', spot);
+              return;
+            }
+          }
+
+          // Rule 2: ICING (IIHF Rule 65)
+          // Puck shot from behind center red line traveling past opposing goal line untouched
+          if (eng.rules.shotOriginTeam === 'HOME' && eng.rules.shotOriginX < CENTER_X && puck.x >= GOAL_RIGHT_X) {
+            const homeShorthanded = eng.penalties.some((p) => p.team === 'HOME');
+            if (!homeShorthanded) {
+              retroAudio.playWhistle();
+              eng.tuxedoPenguinRef.message = 'WHISTLE: ICING! FACEOFF IN DEFENSIVE ZONE';
+              eng.tuxedoPenguinRef.timer = 100;
+              eng.rules.shotOriginTeam = null;
+              const spot = { x: 220, y: puck.y < GOAL_Y_CENTER ? 145 : 375 };
+              setupPositions('AWAY', spot);
+              return;
+            } else {
+              eng.rules.shotOriginTeam = null;
+              eng.tuxedoPenguinRef.message = 'PENALTY KILL: ICING WAVED OFF!';
+              eng.tuxedoPenguinRef.timer = 45;
+            }
+          } else if (eng.rules.shotOriginTeam === 'AWAY' && eng.rules.shotOriginX > CENTER_X && puck.x <= GOAL_LEFT_X) {
+            const awayShorthanded = eng.penalties.some((p) => p.team === 'AWAY');
+            if (!awayShorthanded) {
+              retroAudio.playWhistle();
+              eng.tuxedoPenguinRef.message = 'WHISTLE: ICING! FACEOFF IN DEFENSIVE ZONE';
+              eng.tuxedoPenguinRef.timer = 100;
+              eng.rules.shotOriginTeam = null;
+              const spot = { x: 780, y: puck.y < GOAL_Y_CENTER ? 145 : 375 };
+              setupPositions('HOME', spot);
+              return;
+            } else {
+              eng.rules.shotOriginTeam = null;
+              eng.tuxedoPenguinRef.message = 'PENALTY KILL: ICING WAVED OFF!';
+              eng.tuxedoPenguinRef.timer = 45;
+            }
+          }
+
+          // Rule 3: GOALTENDER FREEZE / COVER (IIHF Rule 67)
+          const inLeftCrease = Math.hypot(puck.x - GOAL_LEFT_X, puck.y - GOAL_Y_CENTER) < 38;
+          const inRightCrease = Math.hypot(puck.x - GOAL_RIGHT_X, puck.y - GOAL_Y_CENTER) < 38;
+          if (inLeftCrease || inRightCrease) {
+            eng.rules.goalieCoverTimer++;
+            if (eng.rules.goalieCoverTimer > 95) {
+              eng.rules.goalieCoverTimer = 0;
+              eng.rules.shotOriginTeam = null;
+              retroAudio.playWhistle();
+              eng.tuxedoPenguinRef.message = 'GOALTENDER COVERS THE PUCK! FACEOFF IN END ZONE';
+              eng.tuxedoPenguinRef.timer = 95;
+              const spot = inLeftCrease
+                ? { x: 220, y: puck.y < GOAL_Y_CENTER ? 145 : 375 }
+                : { x: 780, y: puck.y < GOAL_Y_CENTER ? 145 : 375 };
+              setupPositions(inLeftCrease ? 'HOME' : 'AWAY', spot);
+              return;
+            }
+          } else {
+            eng.rules.goalieCoverTimer = 0;
+          }
+        }
 
         // Check Goal Scored or Post Ping using GoalNetObject methods!
         // 1. Right Goal (Away Net - Target for Home team!)
@@ -1339,7 +1634,14 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
           eng.goalFlash = 110;
           eng.rightNet.applyImpulse(24); // Dynamic spring cloth net bulge on net object!
           retroAudio.playGoalHorn();
-          eng.tuxedoPenguinRef.message = `GOAL! ${homeTeamName.toUpperCase()} SCORES!`;
+          // Rule 4: Minor penalty expires on Power Play Goal
+          const awayPenIdx = eng.penalties.findIndex((p) => p.team === 'AWAY');
+          if (awayPenIdx !== -1) {
+            eng.penalties.splice(awayPenIdx, 1);
+            eng.tuxedoPenguinRef.message = `POWER PLAY GOAL! ${homeTeamName.toUpperCase()} SCORES!`;
+          } else {
+            eng.tuxedoPenguinRef.message = `GOAL! ${homeTeamName.toUpperCase()} SCORES!`;
+          }
           eng.tuxedoPenguinRef.timer = 110;
 
           if (mode === 'SHOOTOUT') {
@@ -1362,7 +1664,14 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
           eng.goalFlash = 110;
           eng.leftNet.applyImpulse(24); // Dynamic spring cloth net bulge on net object!
           retroAudio.playGoalHorn();
-          eng.tuxedoPenguinRef.message = `GOAL! ${awayTeamName.toUpperCase()} SCORES!`;
+          // Rule 4: Minor penalty expires on Power Play Goal
+          const homePenIdx = eng.penalties.findIndex((p) => p.team === 'HOME');
+          if (homePenIdx !== -1) {
+            eng.penalties.splice(homePenIdx, 1);
+            eng.tuxedoPenguinRef.message = `POWER PLAY GOAL! ${awayTeamName.toUpperCase()} SCORES!`;
+          } else {
+            eng.tuxedoPenguinRef.message = `GOAL! ${awayTeamName.toUpperCase()} SCORES!`;
+          }
           eng.tuxedoPenguinRef.timer = 110;
 
           if (mode === 'SHOOTOUT') {
@@ -1462,6 +1771,7 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
             }
 
             puck.ownerId = s.id;
+            eng.rules.shotOriginTeam = null;
             if (s.team === 'HOME') {
               eng.controlledId = s.id;
             }
@@ -1678,8 +1988,8 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
 
       // 8. Tuxedo Penguin Referee Mascot Cameo (Dropping Faceoffs & Calling Plays)
       if (eng.faceoffCountdown > 0) {
-        const rx = 500;
-        const ry = 205;
+        const rx = eng.tuxedoPenguinRef.x || 500;
+        const ry = eng.tuxedoPenguinRef.y || 205;
         // Black & White Referee Stripes
         ctx.fillStyle = '#09090b';
         ctx.fillRect(rx - 7, ry - 14, 14, 18);
@@ -1785,9 +2095,43 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
   };
 
   return (
-    <div className="flex flex-col items-center w-full max-w-[1200px] mx-auto px-4 py-3 select-none">
+    <div
+      ref={arenaContainerRef}
+      className={`select-none transition-all ${
+        isFullscreen
+          ? 'fixed inset-0 z-50 w-screen h-screen bg-[#07090e] p-2 sm:p-4 flex flex-col justify-between overflow-hidden'
+          : 'flex flex-col items-center w-full max-w-[1200px] mx-auto px-4 py-3'
+      }`}
+    >
+      {/* International Hockey Rink & Official Rules Banner */}
+      <div className="w-full flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-slate-400 px-2 py-1 mb-2 bg-slate-950/70 border border-slate-800/80 rounded-lg">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-cyan-400 font-bold uppercase tracking-wider">IIHF PRO RINK</span>
+          <span aria-hidden="true" className="text-slate-600">·</span>
+          <span className="text-slate-300">60M × 30M OLYMPIC SPEC</span>
+          <span aria-hidden="true" className="text-slate-600">·</span>
+          <span className="text-amber-400 font-semibold">OFFICIAL RULES:</span>
+          <span className="text-slate-300">OFFSIDE</span>
+          <span aria-hidden="true" className="text-slate-600">·</span>
+          <span className="text-slate-300">ICING</span>
+          <span aria-hidden="true" className="text-slate-600">·</span>
+          <span className="text-slate-300">POWER PLAY (2:00)</span>
+          <span aria-hidden="true" className="text-slate-600">·</span>
+          <span className="text-slate-300">GOALIE FREEZE</span>
+        </div>
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className="text-amber-400 hover:text-amber-300 font-bold cursor-pointer flex items-center gap-1.5 shrink-0 ml-2"
+          title="Toggle Fullscreen Mode (Hotkey: F)"
+        >
+          {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          <span className="hidden sm:inline">{isFullscreen ? 'Exit Full Screen (F)' : 'Play Full Screen (F)'}</span>
+        </button>
+      </div>
+
       {/* Unobtrusive 16-Bit Broadcast Scoreboard HUD */}
-      <div className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 mb-3 flex flex-wrap items-center justify-between gap-4">
+      <div className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 mb-2 flex flex-wrap items-center justify-between gap-4">
         {/* Home Team */}
         <div className="flex items-center gap-3 min-w-[200px]">
           <div
@@ -1809,7 +2153,7 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
           </div>
         </div>
 
-        {/* Period & Game Clock + Tuxedo Penguin Live Call */}
+        {/* Period & Game Clock + Live Call */}
         <div className="flex flex-col items-center text-center px-4 py-1 bg-slate-950 rounded-lg border border-slate-800">
           <div className="flex items-center gap-3">
             <span className="text-xs font-mono uppercase text-amber-400">
@@ -1839,8 +2183,19 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
             >
               {difficulty}
             </span>
+            <span aria-hidden="true" className="text-slate-600">
+              ·
+            </span>
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-amber-400 transition-colors cursor-pointer"
+              title={isFullscreen ? 'Exit Fullscreen (F)' : 'Enter Fullscreen (F)'}
+            >
+              {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            </button>
           </div>
-          <div className="text-[11px] font-mono text-sky-300 mt-0.5 truncate max-w-[320px]">
+          <div className="text-[11px] font-mono text-sky-300 mt-0.5 truncate max-w-[340px]">
             {hudState.announcementBanner}
           </div>
         </div>
@@ -1879,12 +2234,18 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
               </span>
             ))}
           </div>
-          <span className="text-amber-300">PENALTY BOX ACTIVE</span>
+          <span className="text-amber-300 font-bold">POWER PLAY DEFENSE</span>
         </div>
       )}
 
       {/* Main 16-Bit Ice Canvas Container */}
-      <div className="relative w-full aspect-[1000/520] max-h-[540px] rounded-xl overflow-hidden border-2 border-slate-800 shadow-2xl bg-slate-950">
+      <div
+        className={`relative w-full rounded-xl overflow-hidden border-2 border-slate-800 shadow-2xl bg-slate-950 flex items-center justify-center ${
+          isFullscreen
+            ? 'flex-1 my-1 max-h-[75vh] aspect-[1000/520]'
+            : 'aspect-[1000/520] max-h-[540px]'
+        }`}
+      >
         <canvas
           ref={canvasRef}
           width={RINK_W}
@@ -2145,6 +2506,28 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
             title="Reset Faceoff"
           >
             <RotateCcw className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className={`px-3 py-1.5 border rounded-lg text-xs font-mono font-bold cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+              isFullscreen
+                ? 'bg-amber-400 border-amber-300 text-slate-950 font-bold shadow-md'
+                : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-amber-300 hover:border-amber-400'
+            }`}
+            title="Toggle Fullscreen Mode (Hotkey: F)"
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5 text-slate-950" />
+                <span>EXIT FULLSCREEN</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+                <span>FULLSCREEN</span>
+              </>
+            )}
           </button>
           <button
             type="button"
