@@ -41,6 +41,31 @@ class RetroAudioEngine {
     this.announce("Tuxedo Penguin Gaming Sports — It's in the game!", true);
   }
 
+  // 16-Bit Arcade Intro Fanfare with arpeggiated boot chimes & studio announcement
+  public playIntroFanfare() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const arp = [392.0, 523.25, 659.25, 783.99, 1046.5];
+    arp.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.06);
+      gain.gain.setValueAtTime(0.14, now + idx * 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.005, now + idx * 0.06 + 0.32);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + idx * 0.06);
+      osc.stop(now + idx * 0.06 + 0.34);
+    });
+
+    window.setTimeout(() => {
+      this.playOrganCharge();
+      this.announce("Tuxedo Penguin Gaming Sports — It's in the game!", true);
+    }, 400);
+  }
+
   // Crisp ice carving / snow spray noise burst
   public playSkateCarve(intensity = 0.5) {
     const ctx = this.ensureContext();

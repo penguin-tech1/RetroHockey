@@ -21,6 +21,7 @@ import { IceRinkCanvas, MatchGameMode } from './components/IceRinkCanvas';
 import { DynastyHub } from './components/DynastyHub';
 import { WorldCupHub } from './components/WorldCupHub';
 import { SkillsCompetition } from './components/SkillsCompetition';
+import { GameIntroScreen } from './components/GameIntroScreen';
 import {
   Flame,
   Zap,
@@ -47,6 +48,7 @@ type ActiveView = 'LOBBY' | 'GAME_ARENA' | 'DYNASTY' | 'WORLD_CUP' | 'SKILLS_ACC
 export function App() {
   const [saveState, setSaveState] = useState<DynastySaveState>(() => loadDynastySave());
   const [activeView, setActiveView] = useState<ActiveView>('LOBBY');
+  const [showIntro, setShowIntro] = useState<boolean>(true);
 
   // Match configuration for the 60 FPS arena
   const [matchConfig, setMatchConfig] = useState<{
@@ -323,6 +325,29 @@ export function App() {
         saveState.crtScanlines ? 'crt-scanlines' : ''
       }`}
     >
+      {/* 0. 16-BIT RETRO INTRO SCREEN & ATTRACT MODE (WHEN LAUNCHED OR REPLAYED) */}
+      {showIntro && (
+        <GameIntroScreen
+          onStartGame={(targetMode) => {
+            setShowIntro(false);
+            if (targetMode === 'POND_3V3') {
+              handleStart3v3Pond();
+            } else if (targetMode === 'PRO_5V5') {
+              handleStart5v5Pro(saveState.unlockedTier);
+            } else if (targetMode === 'DYNASTY') {
+              setMatchConfig(null);
+              setActiveView('DYNASTY');
+            } else if (targetMode === 'WORLD_CUP') {
+              setMatchConfig(null);
+              setActiveView('WORLD_CUP');
+            } else {
+              setMatchConfig(null);
+              setActiveView('LOBBY');
+            }
+          }}
+        />
+      )}
+
       {/* 1. TOP RETRO ARCADE NAVIGATION BAR */}
       <header className="bg-black border-b border-amber-500/20 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 flex-wrap">
         {/* Left: Yellow Arcade Wordmark */}
@@ -437,14 +462,31 @@ export function App() {
       <div className="bg-[#0b0f17] border-b border-slate-800/80 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4 flex-wrap">
         {/* Tuxedo Penguin Studio branding */}
         <div className="flex items-center gap-3">
-          <img
-            src={tuxedoPenguinLogo}
-            alt="Tuxedo Penguin Gaming Sports Studio"
-            className="w-9 h-9 rounded-full border border-amber-500/60 object-cover shrink-0 pixelated"
-          />
+          <button
+            type="button"
+            onClick={() => setShowIntro(true)}
+            className="group relative cursor-pointer focus:outline-none shrink-0"
+            title="Click to replay 16-Bit Arcade Intro"
+          >
+            <img
+              src={tuxedoPenguinLogo}
+              alt="Tuxedo Penguin Gaming Sports Studio"
+              className="w-9 h-9 rounded-full border border-amber-500/60 object-cover pixelated group-hover:scale-110 group-hover:border-amber-400 transition-transform shadow-[0_0_12px_rgba(251,191,36,0.3)]"
+            />
+          </button>
           <div>
-            <div className="font-pixel text-[11px] text-white tracking-wider">
-              TUXEDO PENGUIN GAMING SPORTS STUDIO
+            <div className="flex items-center gap-2">
+              <span className="font-pixel text-[11px] text-white tracking-wider">
+                TUXEDO PENGUIN GAMING SPORTS STUDIO
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowIntro(true)}
+                className="text-[9px] font-pixel text-slate-400 hover:text-amber-400 underline cursor-pointer"
+                title="Replay intro video & attract screen"
+              >
+                [INTRO]
+              </button>
             </div>
             <div className="text-[10px] text-amber-400 italic">"It's In The Game!"</div>
           </div>
