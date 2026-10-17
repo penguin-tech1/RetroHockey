@@ -11,7 +11,30 @@ import {
 import { ALL_PLAYERS, FRANCHISE_TEAMS, PLAYER_BY_ID, RINK_VENUES } from '../data/rosterData';
 import { PlayerCardView } from './PlayerCardView';
 import { retroAudio } from '../utils/retroAudio';
-import { PackageOpen, Coins, Users, ShoppingBag, Trophy, Search, RefreshCw, Play } from 'lucide-react';
+import {
+  PackageOpen,
+  Coins,
+  Users,
+  ShoppingBag,
+  Trophy,
+  Search,
+  RefreshCw,
+  Play,
+  Zap,
+  Sparkles,
+  CheckCircle2,
+  ArrowRight,
+  ShieldCheck,
+  ToggleLeft,
+  ToggleRight,
+  Info,
+} from 'lucide-react';
+import {
+  autoBuildBestLineup,
+  isBestCandidateInBinder,
+  LINEUP_SLOT_CONFIG,
+  AutoBuildResult,
+} from '../utils/rosterHelper';
 
 interface DynastyHubProps {
   saveState: DynastySaveState;
@@ -73,6 +96,10 @@ export const DynastyHub: React.FC<DynastyHubProps> = ({
   const [subTab, setSubTab] = useState<SubTab>('LADDER');
   const [selectedLineupSlot, setSelectedLineupSlot] = useState<keyof ActiveLineup>('C');
   const [openedCards, setOpenedCards] = useState<PlayerCard[] | null>(null);
+  const [autoBuildFeedback, setAutoBuildFeedback] = useState<AutoBuildResult | null>(null);
+  const [justAutoBuilt, setJustAutoBuilt] = useState(false);
+  const [recentAutoUpgradeNotice, setRecentAutoUpgradeNotice] = useState<string | null>(null);
+  const [collectionPosFilter, setCollectionPosFilter] = useState<Position | 'ALL'>('ALL');
 
   // Filters for Transfer Market & 500-Player Database
   const [searchQuery, setSearchQuery] = useState('');
@@ -111,6 +138,50 @@ export const DynastyHub: React.FC<DynastyHubProps> = ({
     return Math.round(sum / ids.length);
   }, [saveState.lineup]);
 
+  // Real-time evaluation of whether owned cards can upgrade the current starting 6
+  const autoBuildPotential = useMemo(() => {
+    return autoBuildBestLineup(saveState.ownedCardIds, saveState.lineup);
+  }, [saveState.ownedCardIds, saveState.lineup]);
+
+  // Execute Auto-Build: Put players in the right spot with higher overall (First Position, Then OVR)
+  const handleExecuteAutoBuild = (announce = true) => {
+    const result = autoBuildBestLineup(saveState.ownedCardIds, saveState.lineup);
+    onUpdateSave((prev) => ({
+      ...prev,
+      lineup: result.lineup,
+    }));
+    setAutoBuildFeedback(result);
+    setJustAutoBuilt(true);
+    setTimeout(() => setJustAutoBuilt(false), 3000);
+    retroAudio.playPackOpenChime(true);
+
+    if (announce) {
+      if (result.hasUpgrades) {
+        retroAudio.announce(
+          `Auto-Build complete! Starting lineup upgraded to ${result.newOvr} overall!`,
+          true
+        );
+      } else {
+        retroAudio.announce(
+          'Starting lineup is already optimized with peak overalls for natural positions!',
+          true
+        );
+      }
+    }
+  };
+
+  const handleToggleAutoBuildMode = () => {
+    const nextVal = !saveState.autoBuildMode;
+    onUpdateSave((prev) => ({ ...prev, autoBuildMode: nextVal }));
+    retroAudio.playPuckStick(0.6);
+    if (nextVal) {
+      retroAudio.announce(
+        'Auto-Build Mode activated! New packs will auto-slot highest overall players.',
+        false
+      );
+    }
+  };
+
   // Open Foil Card Pack
   const handleOpenPack = (pack: PackDefinition) => {
     if (saveState.coins < pack.cost) return;
@@ -130,24 +201,46 @@ export const DynastyHub: React.FC<DynastyHubProps> = ({
       retroAudio.announce('Incredible pull! Franchise superstar!', true);
     }
 
-    onUpdateSave((prev) => {
-      const nextOwned = [...prev.ownedCardIds];
-      const nextDupes = { ...prev.duplicateCounts };
-      for (const card of drawn) {
-        if (nextOwned.includes(card.id)) {
-          nextDupes[card.id] = (nextDupes[card.id] || 0) + 1;
-        } else {
-          nextOwned.push(card.id);
-        }
+    // Compute new owned cards and duplicate counts
+    const nextOwned = [...saveState.ownedCardIds];
+    const nextDupes = { ...saveState.duplicateCounts };
+    for (const card of drawn) {
+      if (nextOwned.includes(card.id)) {
+        nextDupes[card.id] = (nextDupes[card.id] || 0) + 1;
+      } else {
+        nextOwned.push(card.id);
       }
-      return {
-        ...prev,
-        coins: prev.coins - pack.cost,
-        ownedCardIds: nextOwned,
-        duplicateCounts: nextDupes,
-      };
-    });
+    }
 
+    let nextLineup = saveState.lineup;
+    let autoRes: AutoBuildResult | null = null;
+    let upgradeNotice: string | null = null;
+
+    if (saveState.autoBuildMode) {
+      autoRes = autoBuildBestLineup(nextOwned, saveState.lineup);
+      if (autoRes.hasUpgrades) {
+        nextLineup = autoRes.lineup;
+        upgradeNotice = `Auto-Build Mode: Upgraded starting line to ${autoRes.newOvr} OVR (+${autoRes.ovrDelta}) with your new cards!`;
+      }
+    }
+
+    // Pure state updater passed to parent App without side-effects
+    onUpdateSave((prev) => ({
+      ...prev,
+      coins: prev.coins - pack.cost,
+      ownedCardIds: nextOwned,
+      duplicateCounts: nextDupes,
+      lineup: nextLineup,
+    }));
+
+    // Safely update local DynastyHub states outside of parent App state updater
+    if (autoRes && autoRes.hasUpgrades) {
+      setAutoBuildFeedback(autoRes);
+      setJustAutoBuilt(true);
+      setTimeout(() => setJustAutoBuilt(false), 3500);
+    }
+
+    setRecentAutoUpgradeNotice(upgradeNotice);
     setOpenedCards(drawn);
   };
 
@@ -405,30 +498,176 @@ export const DynastyHub: React.FC<DynastyHubProps> = ({
 
       {/* TAB 2: ACTIVE SQUAD & LINEUP MANAGEMENT */}
       {subTab === 'SQUAD' && (
-        <div className="space-y-8">
+        <div className="space-y-6">
+          {/* Auto-Build Cockpit Bar */}
+          <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-amber-500/40 rounded-xl p-5 shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="max-w-xl">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 bg-amber-500/20 border border-amber-500/40 text-amber-400 text-[10px] font-mono font-bold rounded uppercase">
+                    Franchise Lineup Engine
+                  </span>
+                  <span className="text-xs font-mono text-slate-400">
+                    SQUAD RATING: <strong className="text-white">{squadOvr} OVR</strong>
+                  </span>
+                </div>
+                <h3 className="text-2xl font-black font-display text-white mt-1">
+                  Starting 6 Ice Lineup & Auto-Build Mode
+                </h3>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  <strong>Auto-Build Mode</strong> puts each player in the right starting spot by{' '}
+                  <span className="text-amber-300 font-semibold">Natural Position first</span> (C, LW, RW, LD, RD, G), then prioritizes the{' '}
+                  <span className="text-amber-300 font-semibold">Highest Overall (OVR)</span>.
+                </p>
+              </div>
+
+              {/* Action Buttons & Mode Switch */}
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Auto-Build Mode Toggle Switch */}
+                <button
+                  type="button"
+                  onClick={handleToggleAutoBuildMode}
+                  className={`px-3.5 py-2.5 rounded-lg border text-xs font-mono font-bold flex items-center gap-2 cursor-pointer transition-colors ${
+                    saveState.autoBuildMode
+                      ? 'bg-emerald-950/50 border-emerald-500/50 text-emerald-300 hover:bg-emerald-900/50'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="When active, opening card packs will automatically slot your highest OVR cards into natural starting positions"
+                >
+                  {saveState.autoBuildMode ? (
+                    <ToggleRight className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <ToggleLeft className="w-4 h-4 text-slate-500 shrink-0" />
+                  )}
+                  <span>
+                    AUTO-BUILD ON PACKS: {saveState.autoBuildMode ? 'ACTIVE' : 'OFF'}
+                  </span>
+                </button>
+
+                {/* Main 1-Click Auto-Build Button */}
+                <button
+                  type="button"
+                  onClick={() => handleExecuteAutoBuild(true)}
+                  className={`px-4 py-2.5 rounded-lg text-xs font-bold font-mono flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shadow-lg ${
+                    autoBuildPotential.hasUpgrades
+                      ? 'bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 shadow-amber-500/20 animate-pulse'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                  }`}
+                >
+                  <Zap className={`w-4 h-4 ${autoBuildPotential.hasUpgrades ? 'text-slate-950 fill-slate-950' : 'text-amber-400'}`} />
+                  <span>
+                    {autoBuildPotential.hasUpgrades
+                      ? `⚡ AUTO-BUILD STARTING LINE (+${autoBuildPotential.ovrDelta} OVR UPGRADE!)`
+                      : `✓ LINEUP OPTIMAL (${squadOvr} OVR) · RE-OPTIMIZE`}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Auto-Build Result Feedback Banner */}
+            {autoBuildFeedback && (
+              <div className="mt-4 pt-4 border-t border-slate-800 bg-slate-950/80 rounded-lg p-3.5 border">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 text-xs font-mono font-bold text-amber-300">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    <span>
+                      {autoBuildFeedback.hasUpgrades
+                        ? `Auto-Build Completed: ${autoBuildFeedback.upgradedCount} slot${autoBuildFeedback.upgradedCount > 1 ? 's' : ''} upgraded! Squad now at ${autoBuildFeedback.newOvr} OVR (+${autoBuildFeedback.ovrDelta})`
+                        : `Starting lineup confirmed optimal: All 6 natural positions filled by your binder's highest overalls!`}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAutoBuildFeedback(null)}
+                    className="text-[11px] font-mono text-slate-400 hover:text-white px-2 py-0.5 bg-slate-900 rounded cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs font-mono">
+                  {autoBuildFeedback.changes.map((c) => (
+                    <div
+                      key={c.slot}
+                      className={`p-2 rounded border ${
+                        c.changed
+                          ? 'bg-amber-500/10 border-amber-500/40 text-amber-200'
+                          : 'bg-slate-900/60 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <div className="text-[10px] font-bold text-slate-400 uppercase">
+                        {c.slot} · {c.expectedPos}
+                      </div>
+                      <div className="font-bold text-white truncate">{c.newPlayer.name}</div>
+                      <div className="text-[11px] text-amber-400 font-bold">
+                        {c.newPlayer.ovr} OVR
+                        {c.changed && c.oldPlayer && (
+                          <span className="text-emerald-400 ml-1">
+                            (↑ +{c.ovrDiff})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Starting 6 Ice Lineup Grid */}
           <div>
-            <h3 className="text-xl font-bold font-display text-white mb-3">
-              Starting 6 Ice Lineup — Select a Position Slot to Swap Skaters
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold font-display text-white">
+                Starting 6 Ice Lineup (Select slot to view or swap candidates)
+              </h3>
+              <div className="text-xs font-mono text-slate-400">
+                Rule: Highest OVR in Natural Position first
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(['LW', 'C', 'RW', 'LD', 'RD', 'G'] as (keyof ActiveLineup)[]).map((slot) => {
+              {LINEUP_SLOT_CONFIG.map(({ slot, label, expectedPos, fullName }) => {
                 const playerId = saveState.lineup[slot];
                 const player = PLAYER_BY_ID[playerId] || ALL_PLAYERS[0];
                 const isSelectedSlot = selectedLineupSlot === slot;
+                const isOptimal = isBestCandidateInBinder(slot, playerId, saveState.ownedCardIds);
+
                 return (
-                  <div key={slot} className="flex flex-col">
+                  <div
+                    key={slot}
+                    className={`flex flex-col rounded-xl p-1 transition-all ${
+                      justAutoBuilt
+                        ? 'ring-2 ring-amber-400 scale-[1.01]'
+                        : ''
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5 px-1">
+                      <span className="text-xs font-mono font-bold text-slate-300">
+                        {fullName}
+                      </span>
+                      {isOptimal ? (
+                        <span className="text-[10px] font-mono bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 px-1.5 py-0.5 rounded flex items-center gap-1 font-semibold">
+                          <CheckCircle2 className="w-3 h-3" /> Best in Binder
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-mono bg-amber-500/20 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded flex items-center gap-1 font-semibold animate-pulse">
+                          <Sparkles className="w-3 h-3" /> Upgrade Available
+                        </span>
+                      )}
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => setSelectedLineupSlot(slot)}
-                      className={`mb-2 py-1.5 px-3 rounded-lg text-xs font-mono font-bold text-left flex items-center justify-between cursor-pointer ${
+                      className={`mb-2 py-1.5 px-3 rounded-lg text-xs font-mono font-bold text-left flex items-center justify-between cursor-pointer transition-colors ${
                         isSelectedSlot
-                          ? 'bg-amber-500 text-slate-950'
+                          ? 'bg-amber-500 text-slate-950 font-bold'
                           : 'bg-slate-900 text-slate-300 border border-slate-800 hover:border-slate-700'
                       }`}
                     >
-                      <span>SLOT: {slot}</span>
-                      <span>{isSelectedSlot ? 'SELECTING REPLACEMENT BELOW' : 'CLICK TO CHANGE'}</span>
+                      <span>SLOT: {slot} ({expectedPos})</span>
+                      <span>{isSelectedSlot ? 'VIEWING REPLACEMENTS' : 'CLICK TO SWAP'}</span>
                     </button>
+
                     <PlayerCardView player={player} isSelected={isSelectedSlot} isOwned />
                   </div>
                 );
@@ -436,31 +675,63 @@ export const DynastyHub: React.FC<DynastyHubProps> = ({
             </div>
           </div>
 
+          {/* Owned Franchise Collection / Binder */}
           <div className="pt-6 border-t border-slate-800">
-            <h3 className="text-xl font-bold font-display text-white mb-1">
-              Owned Franchise Collection ({ownedCards.length} Skaters & Goalies)
-            </h3>
-            <p className="text-xs text-slate-400 mb-4">
-              Assign any owned card to the currently highlighted{' '}
-              <strong className="text-amber-400">{selectedLineupSlot}</strong> slot.
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
+              <div>
+                <h3 className="text-xl font-bold font-display text-white">
+                  Owned Franchise Collection ({ownedCards.length} Cards in Binder)
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Assign any owned card directly to the highlighted{' '}
+                  <strong className="text-amber-400">{selectedLineupSlot}</strong> slot, or use Auto-Build Mode above to automatically slot highest overalls.
+                </p>
+              </div>
+
+              {/* Positional quick filters for owned collection */}
+              <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg">
+                {(['ALL', 'C', 'LW', 'RW', 'D', 'G'] as (Position | 'ALL')[]).map((pos) => (
+                  <button
+                    key={pos}
+                    type="button"
+                    onClick={() => setCollectionPosFilter(pos)}
+                    className={`px-2.5 py-1 text-xs font-mono font-bold rounded cursor-pointer transition-colors ${
+                      collectionPosFilter === pos
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {pos}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {ownedCards.map((card) => {
-                const inLineup = Object.values(saveState.lineup).includes(card.id);
-                return (
-                  <PlayerCardView
-                    key={card.id}
-                    player={card}
-                    isOwned
-                    duplicateCount={saveState.duplicateCounts[card.id] || 0}
-                    actionLabel={
-                      inLineup ? `In Starting Lineup` : `Assign to ${selectedLineupSlot} Slot`
-                    }
-                    disabledAction={inLineup}
-                    onAction={handleAssignToLineup}
-                  />
-                );
-              })}
+              {ownedCards
+                .filter((card) => collectionPosFilter === 'ALL' || card.pos === collectionPosFilter)
+                .map((card) => {
+                  const inLineupSlot = Object.entries(saveState.lineup).find(
+                    ([, id]) => id === card.id
+                  )?.[0];
+                  const inLineup = Boolean(inLineupSlot);
+
+                  return (
+                    <PlayerCardView
+                      key={card.id}
+                      player={card}
+                      isOwned
+                      duplicateCount={saveState.duplicateCounts[card.id] || 0}
+                      actionLabel={
+                        inLineup
+                          ? `Starting in ${inLineupSlot}`
+                          : `Equip to ${selectedLineupSlot} Slot`
+                      }
+                      disabledAction={inLineup}
+                      onAction={handleAssignToLineup}
+                    />
+                  );
+                })}
             </div>
           </div>
         </div>
@@ -500,7 +771,7 @@ export const DynastyHub: React.FC<DynastyHubProps> = ({
                       onClick={() => handleOpenPack(pack)}
                       className={`w-full py-2.5 px-4 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                         canAfford
-                          ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer'
+                          ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer font-bold'
                           : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                       }`}
                     >
@@ -514,24 +785,61 @@ export const DynastyHub: React.FC<DynastyHubProps> = ({
 
           {/* Newly Pulled Foil Cards Reveal */}
           {openedCards && (
-            <div className="bg-slate-900 border border-amber-500/50 rounded-xl p-6 mt-6">
-              <div className="flex items-center justify-between mb-4">
+            <div className="bg-slate-900 border-2 border-amber-500 rounded-xl p-6 mt-6 shadow-2xl">
+              <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pb-4 border-b border-slate-800">
                 <div>
-                  <div className="text-xs font-mono text-amber-400 uppercase">
+                  <div className="text-xs font-mono text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" />
                     FRESH FROM THE FOIL WRAPPER!
                   </div>
-                  <h3 className="text-2xl font-bold font-display text-white">
+                  <h3 className="text-2xl font-black font-display text-white mt-0.5">
                     Pack Pulls Added to Your Franchise Binder
                   </h3>
+                  {recentAutoUpgradeNotice && (
+                    <div className="text-xs font-mono text-emerald-400 font-bold mt-1 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>{recentAutoUpgradeNotice}</span>
+                    </div>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setOpenedCards(null)}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 rounded-lg cursor-pointer"
-                >
-                  Dismiss
-                </button>
+
+                <div className="flex items-center gap-2">
+                  {/* Auto-Build Shortcut Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleExecuteAutoBuild(true);
+                      setSubTab('SQUAD');
+                    }}
+                    className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono font-bold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer shadow-lg transition-colors whitespace-nowrap"
+                  >
+                    <Zap className="w-3.5 h-3.5 fill-slate-950" />
+                    Auto-Build Lineup & View Roster
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSubTab('SQUAD')}
+                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
+                  >
+                    <span>Franchise Roster</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenedCards(null);
+                      setRecentAutoUpgradeNotice(null);
+                    }}
+                    className="px-3 py-2 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs text-slate-400 hover:text-white rounded-lg cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </div>
+
+              {/* Reveal Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {openedCards.map((c, idx) => (
                   <PlayerCardView

@@ -49,6 +49,7 @@ export interface InternationalTeam {
 
 export type RinkTierId = 1 | 2 | 3 | 4 | 5;
 export type DifficultyMode = 'EASY' | 'PRO' | 'LEGEND';
+export type PlayerAutoDifficulty = 'EASY' | 'HARD' | 'LEGEND';
 
 export interface RinkVenue {
   tier: RinkTierId;
@@ -89,6 +90,8 @@ export interface DynastySaveState {
   secondaryColor: string;
   difficulty: DifficultyMode;
   autoMode: boolean;
+  playerAutoDifficulty: PlayerAutoDifficulty;
+  autoBuildMode: boolean;
   gopiMode: boolean;
   crtScanlines: boolean;
   shootoutHighScore: number;

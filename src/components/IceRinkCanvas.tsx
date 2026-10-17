@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { DifficultyMode, PlayerCard, RinkVenue } from '../types/game';
+import { DifficultyMode, PlayerAutoDifficulty, PlayerCard, RinkVenue } from '../types/game';
 import { retroAudio } from '../utils/retroAudio';
 import { Volume2, VolumeX, Play, Pause, RotateCcw, ShieldAlert, Zap, Award, Maximize2, Minimize2 } from 'lucide-react';
 
@@ -19,7 +19,9 @@ interface IceRinkCanvasProps {
   gopiMode: boolean;
   difficulty?: DifficultyMode;
   autoMode?: boolean;
+  playerAutoDifficulty?: PlayerAutoDifficulty;
   onToggleAutoMode?: () => void;
+  onChangePlayerAutoDifficulty?: (diff: PlayerAutoDifficulty) => void;
   onMatchComplete: (result: {
     homeScore: number;
     awayScore: number;
@@ -125,7 +127,9 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
   gopiMode,
   difficulty = 'PRO',
   autoMode = false,
+  playerAutoDifficulty = 'HARD',
   onToggleAutoMode,
+  onChangePlayerAutoDifficulty,
   onMatchComplete,
   onExit,
 }) => {
@@ -1169,6 +1173,17 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
         triggerDefenseAction('POKE');
       } else if (e.code === 'KeyP') {
         eng.isPaused = !eng.isPaused;
+      } else if (e.code === 'KeyM') {
+        onToggleAutoMode?.();
+      } else if (e.code === 'KeyN' && autoMode) {
+        const nextDiff: PlayerAutoDifficulty =
+          playerAutoDifficulty === 'EASY'
+            ? 'HARD'
+            : playerAutoDifficulty === 'HARD'
+            ? 'LEGEND'
+            : 'EASY';
+        onChangePlayerAutoDifficulty?.(nextDiff);
+        retroAudio.announce(`Player Auto: ${nextDiff}`, false);
       }
     };
 
@@ -1292,6 +1307,7 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
         if (s.checkCooldown > 0) s.checkCooldown--;
 
         const isControlled = s.id === eng.controlledId;
+        // Opponent AI Difficulty Multipliers (EASY | PRO | LEGEND) - Never affects player team
         const diffMultiplier =
           difficulty === 'EASY'
             ? { botSpeed: 0.72, botAccel: 0.65, botShotChance: 0.018, botCheckChance: 0.22, goalieReflex: 0.75 }
@@ -1299,14 +1315,50 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
             ? { botSpeed: 1.25, botAccel: 1.30, botShotChance: 0.075, botCheckChance: 0.78, goalieReflex: 1.35 }
             : { botSpeed: 1.0, botAccel: 1.0, botShotChance: 0.035, botCheckChance: 0.45, goalieReflex: 1.0 };
 
+        // Player Team Auto Mode Multipliers (EASY | HARD | LEGEND) - Independent from Opponent AI
+        const playerAutoMultiplier =
+          playerAutoDifficulty === 'EASY'
+            ? {
+                speed: 0.82,
+                accel: 0.76,
+                shotChance: 0.024,
+                checkChance: 0.35,
+                goalieReflex: 0.82,
+                shootDist: 650,
+                slapChance: 0.15,
+                passFreq: 0.014,
+              }
+            : playerAutoDifficulty === 'LEGEND'
+            ? {
+                speed: 1.25,
+                accel: 1.30,
+                shotChance: 0.080,
+                checkChance: 0.86,
+                goalieReflex: 1.35,
+                shootDist: 580,
+                slapChance: 0.62,
+                passFreq: 0.038,
+              }
+            : {
+                // HARD
+                speed: 1.05,
+                accel: 1.05,
+                shotChance: 0.048,
+                checkChance: 0.62,
+                goalieReflex: 1.10,
+                shootDist: 615,
+                slapChance: 0.38,
+                passFreq: 0.025,
+              };
+
         const maxSpeed =
           s.role === 'G'
-            ? 3.2 * (s.team === 'AWAY' ? diffMultiplier.goalieReflex : 1.0)
+            ? 3.2 * (s.team === 'AWAY' ? diffMultiplier.goalieReflex : (autoMode ? playerAutoMultiplier.goalieReflex : 1.0))
             : (4.1 + (s.card.skt - 70) * 0.035 + (s.team === 'HOME' && eng.momentumBonusHome > 0 ? 0.45 : 0)) *
-              (s.team === 'AWAY' ? diffMultiplier.botSpeed : 1.0);
+              (s.team === 'AWAY' ? diffMultiplier.botSpeed : (autoMode ? playerAutoMultiplier.speed : 1.0));
         const accel =
           (s.role === 'G' ? 0.35 : 0.26 + (s.card.skt - 70) * 0.0025) *
-          (s.team === 'AWAY' ? diffMultiplier.botAccel : 1.0);
+          (s.team === 'AWAY' ? diffMultiplier.botAccel : (autoMode ? playerAutoMultiplier.accel : 1.0));
 
         let ax = 0;
         let ay = 0;
@@ -1336,12 +1388,12 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
               s.animFrame += 0.25;
             }
           } else if (isControlled && autoMode) {
-            // AUTO PLAY MODE: Autonomous AI guidance for player-controlled skater
+            // AUTO PLAY MODE: Autonomous AI guidance for player's team (Easy, Hard, Legend)
             const hasPuck = eng.puck.ownerId === s.id;
             if (hasPuck) {
               // Skate aggressively into shooting slot towards opponent net (Right)
-              const tx = GOAL_RIGHT_X - 110;
-              const ty = GOAL_Y_CENTER + Math.sin(eng.clockFrames * 0.06) * 45;
+              const tx = GOAL_RIGHT_X - (playerAutoDifficulty === 'LEGEND' ? 85 : playerAutoDifficulty === 'HARD' ? 110 : 135);
+              const ty = GOAL_Y_CENTER + Math.sin(eng.clockFrames * 0.06) * (playerAutoDifficulty === 'EASY' ? 55 : 35);
               const dx = tx - s.x;
               const dy = ty - s.y;
               const d = Math.hypot(dx, dy);
@@ -1352,9 +1404,10 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
                 s.animFrame += 0.25;
               }
               // Auto shoot when in the attacking zone!
-              if (s.x > 620 && Math.random() < 0.042) {
-                releaseShot(Math.random() > 0.4 ? 28 : 10, false);
-              } else if (s.x > 500 && Math.random() < 0.02) {
+              if (s.x > playerAutoMultiplier.shootDist && Math.random() < playerAutoMultiplier.shotChance) {
+                const isSlap = Math.random() < playerAutoMultiplier.slapChance;
+                releaseShot(isSlap ? (playerAutoDifficulty === 'LEGEND' ? 34 : 26) : 12, isSlap);
+              } else if (s.x > 480 && Math.random() < playerAutoMultiplier.passFreq) {
                 triggerPassOrSwitch();
               }
             } else {
@@ -1363,13 +1416,16 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
               const dy = eng.puck.y - s.y;
               const d = Math.hypot(dx, dy);
               if (d > 8) {
-                s.vx += (dx / d) * (accel * 0.92);
-                s.vy += (dy / d) * (accel * 0.92);
+                s.vx += (dx / d) * (accel * (playerAutoDifficulty === 'LEGEND' ? 1.0 : playerAutoDifficulty === 'HARD' ? 0.92 : 0.80));
+                s.vy += (dy / d) * (accel * (playerAutoDifficulty === 'LEGEND' ? 1.0 : playerAutoDifficulty === 'HARD' ? 0.92 : 0.80));
                 s.angle = Math.atan2(s.vy, s.vx);
                 s.animFrame += 0.25;
               }
-              if (d < 30 && s.checkCooldown === 0 && eng.puck.ownerId && eng.puck.ownerId.startsWith('AWAY_')) {
-                triggerDefenseAction(Math.random() > 0.5 ? 'BODY_CHECK' : 'POKE');
+              if (d < 34 && s.checkCooldown === 0 && eng.puck.ownerId && eng.puck.ownerId.startsWith('AWAY_')) {
+                s.checkCooldown = playerAutoDifficulty === 'LEGEND' ? 24 : playerAutoDifficulty === 'HARD' ? 38 : 55;
+                if (Math.random() < playerAutoMultiplier.checkChance) {
+                  triggerDefenseAction(Math.random() > 0.45 ? 'BODY_CHECK' : 'POKE');
+                }
               }
             }
           } else if (s.role === 'G') {
@@ -1379,7 +1435,9 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
               GOAL_Y_CENTER - GOAL_HALF_W + 6,
               Math.min(GOAL_Y_CENTER + GOAL_HALF_W - 6, eng.puck.y)
             );
-            const reflexSpeed = (0.09 + (s.card.def - 70) * 0.0025) * (s.team === 'AWAY' ? diffMultiplier.goalieReflex : 1.0);
+            const reflexSpeed =
+              (0.09 + (s.card.def - 70) * 0.0025) *
+              (s.team === 'AWAY' ? diffMultiplier.goalieReflex : (autoMode ? playerAutoMultiplier.goalieReflex : 1.0));
             s.x += (goalX - s.x) * 0.2;
             s.y += (targetY - s.y) * reflexSpeed;
           } else {
@@ -1393,12 +1451,25 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
               if (s.role === 'LD' || s.role === 'RD') tx = Math.min(520, eng.puck.x - 140);
               else tx = Math.min(GOAL_RIGHT_X - 65, eng.puck.x + 85);
 
+              // In Auto Mode, teammates support with tactful spacing based on playerAutoDifficulty
+              if (autoMode) {
+                if (playerAutoDifficulty === 'LEGEND') {
+                  if (s.role === 'LW' || s.role === 'RW') {
+                    tx = Math.min(GOAL_RIGHT_X - 55, eng.puck.x + 95);
+                    ty = s.role === 'LW' ? GOAL_Y_CENTER - 42 : GOAL_Y_CENTER + 42;
+                  }
+                }
+              }
+
               const dx = tx - s.x;
               const dy = ty - s.y;
               const d = Math.hypot(dx, dy);
               if (d > 18) {
-                s.vx += (dx / d) * (accel * 0.75);
-                s.vy += (dy / d) * (accel * 0.75);
+                const teamAccelMod = autoMode
+                  ? (playerAutoDifficulty === 'LEGEND' ? 0.95 : playerAutoDifficulty === 'HARD' ? 0.82 : 0.68)
+                  : 0.75;
+                s.vx += (dx / d) * (accel * teamAccelMod);
+                s.vy += (dy / d) * (accel * teamAccelMod);
                 s.angle = Math.atan2(s.vy, s.vx);
                 s.animFrame += 0.2;
               }
@@ -2173,16 +2244,41 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
               ·
             </span>
             <span
-              className={`text-[10px] font-pixel px-1.5 py-0.5 rounded ${
+              className={`text-[9px] font-pixel px-1.5 py-0.5 rounded ${
                 difficulty === 'LEGEND'
                   ? 'bg-rose-950 text-rose-300 border border-rose-500/50'
                   : difficulty === 'PRO'
                   ? 'bg-amber-950 text-amber-300 border border-amber-500/50'
                   : 'bg-emerald-950 text-emerald-300 border border-emerald-500/50'
               }`}
+              title="Opponent AI Difficulty (Easy, Pro, Legend)"
             >
-              {difficulty}
+              OPPONENT: {difficulty}
             </span>
+            <span aria-hidden="true" className="text-slate-600">
+              ·
+            </span>
+            {autoMode ? (
+              <span
+                className={`text-[9px] font-pixel px-1.5 py-0.5 rounded ${
+                  playerAutoDifficulty === 'LEGEND'
+                    ? 'bg-purple-950 text-purple-300 border border-purple-500/60 animate-pulse'
+                    : playerAutoDifficulty === 'HARD'
+                    ? 'bg-amber-950 text-amber-300 border border-amber-500/60'
+                    : 'bg-emerald-950 text-emerald-300 border border-emerald-500/60'
+                }`}
+                title="Player Team Auto Mode Difficulty (Easy, Hard, Legend)"
+              >
+                TEAM AUTO: {playerAutoDifficulty}
+              </span>
+            ) : (
+              <span
+                className="text-[9px] font-pixel px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700"
+                title="Player 1: Manual Controls"
+              >
+                P1: MANUAL
+              </span>
+            )}
             <span aria-hidden="true" className="text-slate-600">
               ·
             </span>
@@ -2386,25 +2482,63 @@ export const IceRinkCanvas: React.FC<IceRinkCanvasProps> = ({
             <strong className="text-slate-200">Z / J</strong> · Wrist/Slap/One-Timer:{' '}
             <strong className="text-slate-200">Space / X (Hold)</strong> · Body Check:{' '}
             <strong className="text-slate-200">C</strong> · Poke Check:{' '}
-            <strong className="text-slate-200">V</strong>
+            <strong className="text-slate-200">V</strong> · Auto:{' '}
+            <strong className="text-purple-400">M</strong> · Skill:{' '}
+            <strong className="text-amber-400">N</strong>
           </span>
         </div>
 
         {/* Direct Click/Touch Arcade Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
           {onToggleAutoMode && (
-            <button
-              type="button"
-              onClick={onToggleAutoMode}
-              className={`px-3 py-1.5 border rounded-lg text-xs font-mono font-bold cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1 ${
-                autoMode
-                  ? 'bg-purple-600 border-purple-400 text-white animate-pulse shadow-md'
-                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-              }`}
-              title="Toggle Auto Play Mode (AI plays both teams autonomously)"
-            >
-              <span>AUTO: {autoMode ? 'ON' : 'OFF'}</span>
-            </button>
+            <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-700 shadow-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  retroAudio.playPuckStick(0.5);
+                  onToggleAutoMode();
+                }}
+                className={`px-2.5 py-1.5 rounded-md text-xs font-mono font-bold cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+                  autoMode
+                    ? 'bg-purple-600 border border-purple-400 text-white shadow'
+                    : 'bg-slate-800 border border-slate-700 text-slate-400 hover:text-white'
+                }`}
+                title="Toggle Auto Play Mode for your team (Hotkey: M)"
+              >
+                <span className={`w-2 h-2 rounded-full ${autoMode ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
+                <span>AUTO: {autoMode ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {/* Player Auto Difficulty Buttons (Easy, Hard, Legend) */}
+              {autoMode && (
+                <div className="flex items-center gap-1 pl-1 border-l border-slate-700">
+                  <span className="text-[9px] font-pixel text-slate-400 hidden sm:inline">SKILL:</span>
+                  {(['EASY', 'HARD', 'LEGEND'] as const).map((lvl) => (
+                    <button
+                      key={lvl}
+                      type="button"
+                      onClick={() => {
+                        retroAudio.playPuckStick(0.6);
+                        retroAudio.announce(`Player Auto: ${lvl}`, false);
+                        onChangePlayerAutoDifficulty?.(lvl);
+                      }}
+                      className={`px-2 py-1 rounded text-[10px] font-pixel cursor-pointer transition-all ${
+                        playerAutoDifficulty === lvl
+                          ? lvl === 'LEGEND'
+                            ? 'bg-purple-500 text-slate-950 font-bold ring-1 ring-purple-300 shadow-sm'
+                            : lvl === 'HARD'
+                            ? 'bg-amber-400 text-slate-950 font-bold shadow-sm'
+                            : 'bg-emerald-400 text-slate-950 font-bold shadow-sm'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                      title={`Set your team Auto Play difficulty to ${lvl} (Hotkey: N). Opponent AI remains ${difficulty}.`}
+                    >
+                      {lvl}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
           <button
             type="button"

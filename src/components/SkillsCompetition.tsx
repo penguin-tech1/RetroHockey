@@ -53,20 +53,18 @@ export const SkillsCompetition: React.FC<SkillsCompetitionProps> = ({
   // Timer countdown for accuracy
   useEffect(() => {
     if (!accuracyActive) return;
+    if (accuracyTimer <= 0) {
+      setAccuracyActive(false);
+      retroAudio.playWhistle();
+      setContestAnnouncement(`TIME'S UP! FINAL SCORE: ${accuracyHits} / 4 TARGETS HIT!`);
+      onUpdateRecord('ACCURACY', accuracyHits);
+      return;
+    }
     const interval = window.setInterval(() => {
-      setAccuracyTimer((prev) => {
-        if (prev <= 1) {
-          setAccuracyActive(false);
-          retroAudio.playWhistle();
-          setContestAnnouncement(`TIME'S UP! FINAL SCORE: ${accuracyHits} / 4 TARGETS HIT!`);
-          onUpdateRecord('ACCURACY', accuracyHits);
-          return 0;
-        }
-        return prev - 1;
-      });
+      setAccuracyTimer((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => window.clearInterval(interval);
-  }, [accuracyActive, accuracyHits, onUpdateRecord]);
+  }, [accuracyActive, accuracyTimer, accuracyHits, onUpdateRecord]);
 
   // Aim crosshair oscillating sweep for 16-bit challenge
   useEffect(() => {

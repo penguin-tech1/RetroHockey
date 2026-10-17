@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   DynastySaveState,
   DifficultyMode,
+  PlayerAutoDifficulty,
   InternationalTeam,
   PlayerCard,
   RinkTierId,
@@ -494,9 +495,12 @@ export function App() {
 
         {/* Coin balance & Free coin button & Audio toggle */}
         <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Difficulty Mode Selector */}
-          <div className="bg-black border border-slate-700 rounded p-0.5 flex items-center gap-0.5 text-[10px] font-pixel">
-            <span className="text-slate-500 px-1 text-[9px] hidden sm:inline">AI:</span>
+          {/* Opponent AI Difficulty Mode Selector */}
+          <div
+            className="bg-black border border-slate-700 rounded p-0.5 flex items-center gap-0.5 text-[10px] font-pixel"
+            title="Opponent AI Difficulty (Easy, Pro, Legend)"
+          >
+            <span className="text-slate-500 px-1 text-[9px] hidden sm:inline">OPPONENT:</span>
             <button
               type="button"
               onClick={() => {
@@ -508,7 +512,7 @@ export function App() {
                   ? 'bg-emerald-500 text-slate-950 font-bold'
                   : 'text-slate-400 hover:text-emerald-400'
               }`}
-              title="Easy: relaxed checking, slower goalie reflexes, gentle shots"
+              title="Opponent AI Easy: relaxed checking, slower goalie reflexes, gentle shots"
             >
               EASY
             </button>
@@ -523,7 +527,7 @@ export function App() {
                   ? 'bg-amber-500 text-slate-950 font-bold'
                   : 'text-slate-400 hover:text-amber-400'
               }`}
-              title="Pro: authentic '94 balanced arcade aggression"
+              title="Opponent AI Pro: authentic '94 balanced arcade aggression"
             >
               PRO
             </button>
@@ -531,7 +535,7 @@ export function App() {
               type="button"
               onClick={() => {
                 retroAudio.playPuckStick(0.8);
-                retroAudio.announce('Legend difficulty activated!', false);
+                retroAudio.announce('Opponent AI Legend activated!', false);
                 updateSave((prev) => ({ ...prev, difficulty: 'LEGEND' }));
               }}
               className={`px-2 py-1 rounded cursor-pointer transition-colors ${
@@ -539,10 +543,63 @@ export function App() {
                   ? 'bg-rose-500 text-slate-950 font-bold animate-pulse'
                   : 'text-slate-400 hover:text-rose-400'
               }`}
-              title="Legend: ruthless forechecking, bone-crushing board smashes, laser slap shots, brick wall goalies"
+              title="Opponent AI Legend: ruthless forechecking, bone-crushing board smashes, laser slap shots"
             >
               LEGEND
             </button>
+          </div>
+
+          {/* Player Team Auto Mode & Difficulty Selector */}
+          <div
+            className="bg-black border border-slate-700 rounded p-0.5 flex items-center gap-1 text-[10px] font-pixel"
+            title="Player Team Auto Mode: Choose if and how your team plays autonomously"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                const nextVal = !saveState.autoMode;
+                retroAudio.playPuckStick(0.5);
+                if (nextVal) retroAudio.announce(`Player Auto Enabled: ${saveState.playerAutoDifficulty}`, false);
+                updateSave((prev) => ({ ...prev, autoMode: nextVal }));
+              }}
+              className={`px-2 py-1 rounded cursor-pointer transition-colors ${
+                saveState.autoMode
+                  ? 'bg-purple-600 text-white font-bold shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Toggle Auto Mode for your team"
+            >
+              AUTO: {saveState.autoMode ? 'ON' : 'OFF'}
+            </button>
+
+            {saveState.autoMode && (
+              <div className="flex items-center gap-0.5 pl-0.5 border-l border-slate-700">
+                <span className="text-slate-500 text-[8px] px-0.5 hidden md:inline">SKILL:</span>
+                {(['EASY', 'HARD', 'LEGEND'] as const).map((lvl) => (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() => {
+                      retroAudio.playPuckStick(0.6);
+                      retroAudio.announce(`Player Auto: ${lvl}`, false);
+                      updateSave((prev) => ({ ...prev, playerAutoDifficulty: lvl }));
+                    }}
+                    className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+                      saveState.playerAutoDifficulty === lvl
+                        ? lvl === 'LEGEND'
+                          ? 'bg-purple-500 text-slate-950 font-bold animate-pulse'
+                          : lvl === 'HARD'
+                          ? 'bg-amber-400 text-slate-950 font-bold'
+                          : 'bg-emerald-400 text-slate-950 font-bold'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title={`Set your team Auto Play difficulty to ${lvl}. (Opponent AI remains ${saveState.difficulty})`}
+                  >
+                    {lvl}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Coin balance pill */}
@@ -603,8 +660,12 @@ export function App() {
             gopiMode={saveState.gopiMode}
             difficulty={saveState.difficulty}
             autoMode={saveState.autoMode}
+            playerAutoDifficulty={saveState.playerAutoDifficulty}
             onToggleAutoMode={() =>
               updateSave((prev) => ({ ...prev, autoMode: !prev.autoMode }))
+            }
+            onChangePlayerAutoDifficulty={(diff) =>
+              updateSave((prev) => ({ ...prev, playerAutoDifficulty: diff }))
             }
             onMatchComplete={handleMatchComplete}
             onExit={() => {
@@ -843,7 +904,7 @@ export function App() {
 
               {/* Controls center / right */}
               <div className="flex items-center gap-3 flex-wrap">
-                {/* Playing Mode / Difficulty Toggle */}
+                {/* Playing Mode / Opponent AI Difficulty Toggle */}
                 <button
                   type="button"
                   onClick={() => {
@@ -865,17 +926,17 @@ export function App() {
                   }`}
                   title="Cycle Opponent AI Aggressiveness: Easy -> Pro -> Legend"
                 >
-                  <span>AI DIFFICULTY: {saveState.difficulty}</span>
+                  <span>OPPONENT AI: {saveState.difficulty}</span>
                 </button>
 
-                {/* Auto Play Mode Button */}
+                {/* Player Team Auto Mode Button */}
                 <button
                   type="button"
                   onClick={() => {
                     const nextAuto = !saveState.autoMode;
                     retroAudio.playPuckStick(0.6);
                     if (nextAuto) {
-                      retroAudio.announce('Auto Play Mode Enabled', false);
+                      retroAudio.announce(`Player Auto Enabled: ${saveState.playerAutoDifficulty}`, false);
                     }
                     updateSave((prev) => ({ ...prev, autoMode: nextAuto }));
                   }}
@@ -884,10 +945,38 @@ export function App() {
                       ? 'bg-purple-950 border-purple-500/70 text-purple-300 animate-pulse'
                       : 'bg-slate-900 border-slate-700 text-slate-400'
                   }`}
-                  title="Auto Play Mode: Autonomous AI controls both squads"
+                  title="Player Auto Mode: Let autonomous AI guide your team"
                 >
-                  <span>AUTO MODE: {saveState.autoMode ? 'ON' : 'OFF'}</span>
+                  <span>PLAYER AUTO: {saveState.autoMode ? 'ON' : 'OFF'}</span>
                 </button>
+
+                {/* Player Auto Difficulty Button (When Auto Mode is active) */}
+                {saveState.autoMode && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextLvl: PlayerAutoDifficulty =
+                        saveState.playerAutoDifficulty === 'EASY'
+                          ? 'HARD'
+                          : saveState.playerAutoDifficulty === 'HARD'
+                          ? 'LEGEND'
+                          : 'EASY';
+                      retroAudio.playPuckStick(0.6);
+                      retroAudio.announce(`Player Auto Skill: ${nextLvl}`, false);
+                      updateSave((prev) => ({ ...prev, playerAutoDifficulty: nextLvl }));
+                    }}
+                    className={`px-3 py-1.5 rounded font-pixel text-[10px] cursor-pointer border transition-colors flex items-center gap-1.5 ${
+                      saveState.playerAutoDifficulty === 'LEGEND'
+                        ? 'bg-purple-900 border-purple-400 text-purple-200 shadow'
+                        : saveState.playerAutoDifficulty === 'HARD'
+                        ? 'bg-amber-950 border-amber-500/70 text-amber-300'
+                        : 'bg-emerald-950 border-emerald-500/70 text-emerald-300'
+                    }`}
+                    title="Cycle how your team plays in Auto Mode: Easy -> Hard -> Legend (Opponent AI is unaffected)"
+                  >
+                    <span>TEAM SKILL: {saveState.playerAutoDifficulty}</span>
+                  </button>
+                )}
 
                 {/* Gopi Mode Button */}
                 <button

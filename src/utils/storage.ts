@@ -27,6 +27,8 @@ export const DEFAULT_DYNASTY_SAVE: DynastySaveState = {
   secondaryColor: '#facc15',
   difficulty: 'PRO',
   autoMode: false,
+  playerAutoDifficulty: 'HARD',
+  autoBuildMode: true,
   gopiMode: true, // Default tuned for Intel N-Series Locked 60 FPS & zero overdraw
   crtScanlines: false,
   shootoutHighScore: 14,
@@ -44,6 +46,7 @@ export function loadDynastySave(): DynastySaveState {
     return {
       ...DEFAULT_DYNASTY_SAVE,
       ...parsed,
+      playerAutoDifficulty: parsed.playerAutoDifficulty || DEFAULT_DYNASTY_SAVE.playerAutoDifficulty,
       lineup: {
         ...DEFAULT_DYNASTY_SAVE.lineup,
         ...(parsed.lineup || {}),
